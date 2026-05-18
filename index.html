@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Junk Journal</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="bg"></div>
+
+  <!-- Floating toggle — always visible, opens/closes the drawer -->
+  <button id="drawer-toggle" aria-label="Open menu">☰</button>
+
+  <!-- ── LEFT DRAWER ─────────────────────────────────────────── -->
+  <nav id="drawer">
+    <div id="drawer-header">
+      <span id="app-title">Menu</span>
+      <button id="drawer-close" aria-label="Close menu">✕</button>
+    </div>
+
+    <section class="drawer-section">
+      <p class="drawer-label">Mode</p>
+      <div id="mode-group">
+        <button class="mode-btn active" data-mode="write">Write</button>
+        <button class="mode-btn"        data-mode="draw">Draw</button>
+      </div>
+    </section>
+
+    <section class="drawer-section">
+      <p class="drawer-label">Draw color</p>
+      <div id="palette">
+        <span class="swatch active" data-color="#1a0800"  style="background:#1a0800"></span>
+        <span class="swatch"        data-color="#8B1A1A"  style="background:#8B1A1A"></span>
+        <span class="swatch"        data-color="#C06000"  style="background:#C06000"></span>
+        <span class="swatch"        data-color="#336633"  style="background:#336633"></span>
+        <span class="swatch"        data-color="#1a3a7a"  style="background:#1a3a7a"></span>
+        <span class="swatch"        data-color="#6B2D8B"  style="background:#6B2D8B"></span>
+        <span class="swatch"        data-color="#888888"  style="background:#888888"></span>
+        <span class="swatch"        data-color="#FFFFFF"  style="background:#FFFFFF; outline:1px solid #555"></span>
+      </div>
+    </section>
+
+    <section class="drawer-section">
+      <p class="drawer-label">Brush size</p>
+      <div id="brush-group">
+        <button class="brush-btn active" data-size="2">S</button>
+        <button class="brush-btn"        data-size="5">M</button>
+        <button class="brush-btn"        data-size="12">L</button>
+      </div>
+    </section>
+
+    <section class="drawer-section">
+      <p class="drawer-label">Photos</p>
+      <label id="upload-btn">
+        + Add Photo
+        <input type="file" id="file-input" accept="image/*" multiple hidden />
+      </label>
+      <p class="drawer-hint">Drag a photo onto the page</p>
+      <div id="photo-list"></div>
+    </section>
+
+    <button id="clear-btn">✕ Clear drawings</button>
+  </nav>
+
+  <!-- ── CANVAS ─────────────────────────────────────────────── -->
+  <main id="main">
+    <div id="journal-wrap">
+      <h1 id="journal-title">Junk Journal</h1>
+      <div id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

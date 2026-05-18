@@ -1,0 +1,9 @@
+node_modules/
+dist/
+public/*.jpeg
+public/*.jpg
+public/*.png
+public/*.otf
+public/*.ttf
+public/*.woff
+public/*.woff2
