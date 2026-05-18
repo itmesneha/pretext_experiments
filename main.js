@@ -535,21 +535,15 @@ function addSidebarThumb(id, img) {
 const drawer       = document.getElementById('drawer');
 const drawerToggle = document.getElementById('drawer-toggle');
 
-drawerToggle.addEventListener('click', e => {
-  e.stopPropagation();
-  drawer.classList.toggle('open');
-});
+function openDrawer()  { drawer.classList.add('open');    drawerToggle.style.display = 'none'; }
+function closeDrawer() { drawer.classList.remove('open'); drawerToggle.style.display = ''; }
 
-document.getElementById('drawer-close').addEventListener('click', () => {
-  drawer.classList.remove('open');
-});
-
+drawerToggle.addEventListener('click', e => { e.stopPropagation(); openDrawer(); });
+document.getElementById('drawer-close').addEventListener('click', closeDrawer);
 document.addEventListener('click', e => {
   if (drawer.classList.contains('open') &&
       !drawer.contains(e.target) &&
-      e.target !== drawerToggle) {
-    drawer.classList.remove('open');
-  }
+      e.target !== drawerToggle) closeDrawer();
 });
 
 // ── BOOT ─────────────────────────────────────────────────────────

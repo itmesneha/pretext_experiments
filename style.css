@@ -166,7 +166,7 @@ body {
 }
 
 /* ── COLOR SWATCHES ───────────────────────────────────────────── */
-#palette { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#palette { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .swatch {
   width: 20px;
@@ -176,10 +176,10 @@ body {
   flex-shrink: 0;
   transition: transform 0.1s;
   outline: 2px solid transparent;
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
-.swatch.active { outline-color: #fff; transform: scale(1.2); }
-.swatch:hover:not(.active) { transform: scale(1.15); }
+.swatch.active { outline-color: #fff; transform: scale(1.15); }
+.swatch:hover:not(.active) { transform: scale(1.1); }
 
 /* ── BRUSH SIZE ───────────────────────────────────────────────── */
 #brush-group { display: flex; gap: 3px; align-items: center; }
