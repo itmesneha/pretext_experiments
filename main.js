@@ -60,6 +60,11 @@ let hasFocus      = false;  // hidden textarea focused?
 let showCursor    = true;   // blinks on/off
 let cursorTimer   = null;
 
+let selectedImg  = null;   // image showing resize/delete handles
+let resizingImg  = null;
+let resizeCorner = null;   // 'tl'|'tr'|'bl'|'br'
+let resizeFixed  = null;   // fixed opposite corner {x,y} at resize start
+
 // pretext: cache the prepared object so we only re-measure glyphs
 // when the text actually changes. The layout loop runs every render
 // (cheap arithmetic) but glyph measurement runs at most once per keystroke.
@@ -134,6 +139,29 @@ function imgAt(x, y) {
   return null;
 }
 
+const HANDLE_R = 6;  // corner handle radius (canvas px)
+const DELETE_R = 8;  // delete button radius (canvas px)
+
+function cornersOf(im) {
+  return [
+    { id: 'tl', x: im.x,        y: im.y,        cursor: 'nw-resize' },
+    { id: 'tr', x: im.x + im.w, y: im.y,        cursor: 'ne-resize' },
+    { id: 'bl', x: im.x,        y: im.y + im.h, cursor: 'sw-resize' },
+    { id: 'br', x: im.x + im.w, y: im.y + im.h, cursor: 'se-resize' },
+  ];
+}
+
+function handleAt(px, py) {
+  if (!selectedImg) return null;
+  for (const c of cornersOf(selectedImg))
+    if (Math.abs(px - c.x) <= HANDLE_R * 2 && Math.abs(py - c.y) <= HANDLE_R * 2) return c;
+  return null;
+}
+
+function isOverDelete(px, py, im) {
+  return Math.hypot(px - (im.x + im.w), py - im.y) <= DELETE_R * 2;
+}
+
 // ── PRETEXT LINE-WIDTH ORACLE ─────────────────────────────────────
 /**
  * lineLayout(y)  →  Array<{ x, w }>
@@ -146,26 +174,51 @@ function imgAt(x, y) {
 function lineLayout(y) {
   const lineTop = y;
   const lineBot = y + LINE_H;
-  const GAP = 10;
+  const GAP     = 10; // gap around strokes
+  const IMG_GAP = 2;  // tighter gap around images
 
-  // Collect obstacles from images
+  // Collect obstacles from images using per-row alpha scanlines so text
+  // hugs the actual visible edges of PNGs rather than their bounding boxes.
   const obs = [];
   for (const im of canvasImages) {
     if (lineBot <= im.y || lineTop >= im.y + im.h) continue;
-    obs.push({ x: im.x - GAP, right: im.x + im.w + GAP });
+
+    if (im.alpha) {
+      const { rows, nw, nh } = im.alpha;
+      const scaleX = im.w / nw;
+      const scaleY = im.h / nh;
+      const r0 = Math.max(0,      Math.floor((lineTop - im.y) / scaleY));
+      const r1 = Math.min(nh - 1, Math.ceil ((lineBot - im.y) / scaleY));
+      let lo = Infinity, hi = -Infinity;
+      for (let r = r0; r <= r1; r++) {
+        if (rows[r]) { lo = Math.min(lo, rows[r][0] * scaleX); hi = Math.max(hi, rows[r][1] * scaleX); }
+      }
+      if (lo !== Infinity) obs.push({ x: im.x + lo - IMG_GAP, right: im.x + hi + IMG_GAP });
+    } else {
+      obs.push({ x: im.x - IMG_GAP, right: im.x + im.w + IMG_GAP });
+    }
   }
 
-  // Collect obstacles from strokes: x-extent of all points in this band
+  // Collect obstacles from strokes: find separate ink intervals in this band
+  // so a circle's interior stays open (left arc and right arc are distinct obstacles).
   const allStrokes = drawingStroke ? [...strokes, drawingStroke] : strokes;
   for (const s of allStrokes) {
-    let minX = Infinity, maxX = -Infinity;
+    const ivs = [];
     for (const pt of s.pts) {
-      if (pt.y + s.lineW >= lineTop && pt.y - s.lineW <= lineBot) {
-        minX = Math.min(minX, pt.x - s.lineW);
-        maxX = Math.max(maxX, pt.x + s.lineW);
-      }
+      if (pt.y + s.lineW >= lineTop && pt.y - s.lineW <= lineBot)
+        ivs.push([pt.x - s.lineW, pt.x + s.lineW]);
     }
-    if (minX !== Infinity) obs.push({ x: minX - GAP, right: maxX + GAP });
+    if (ivs.length === 0) continue;
+    ivs.sort((a, b) => a[0] - b[0]);
+    // Merge intervals that are physically touching (within one lineWidth of each other).
+    // Intervals farther apart stay separate — text can flow in the gap between them.
+    const merged = [ivs[0].slice()];
+    for (let i = 1; i < ivs.length; i++) {
+      const last = merged[merged.length - 1];
+      if (ivs[i][0] <= last[1] + s.lineW) last[1] = Math.max(last[1], ivs[i][1]);
+      else merged.push(ivs[i].slice());
+    }
+    for (const [x, right] of merged) obs.push({ x: x - GAP, right: right + GAP });
   }
 
   if (obs.length === 0) return [{ x: CON_X, w: CON_W }];
@@ -205,18 +258,55 @@ function render() {
 
 function renderImages() {
   for (const im of canvasImages) {
+    const tmp = document.createElement('canvas');
+    tmp.width  = im.w;
+    tmp.height = im.h;
+    tmp.getContext('2d').drawImage(im.img, 0, 0, im.w, im.h);
+
     ctx.save();
-    ctx.shadowColor   = 'rgba(0,0,0,0.45)';
-    ctx.shadowBlur    = 14;
-    ctx.shadowOffsetX = 5;
-    ctx.shadowOffsetY = 5;
-    ctx.drawImage(im.img, im.x, im.y, im.w, im.h);
+    ctx.shadowColor   = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur    = 12;
+    ctx.shadowOffsetX = 4;
+    ctx.shadowOffsetY = 4;
+    ctx.drawImage(tmp, im.x, im.y, im.w, im.h);
     ctx.restore();
 
-    // Thin border so the photo reads as a distinct object
-    ctx.strokeStyle = '#B89850';
+    if (im !== selectedImg) continue;
+
+    // ── Selection outline ────────────────────────────────────────
+    ctx.save();
+    ctx.strokeStyle = 'rgba(99,102,241,0.8)';
     ctx.lineWidth   = 1.5;
+    ctx.setLineDash([4, 3]);
     ctx.strokeRect(im.x, im.y, im.w, im.h);
+    ctx.setLineDash([]);
+
+    // ── Corner resize handles ────────────────────────────────────
+    for (const c of cornersOf(im)) {
+      ctx.fillStyle   = '#ffffff';
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, HANDLE_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // ── Delete button (top-right corner) ────────────────────────
+    const dx = im.x + im.w, dy = im.y;
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(dx, dy, DELETE_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle      = '#ffffff';
+    ctx.font           = `bold ${DELETE_R * 1.4}px sans-serif`;
+    ctx.textAlign      = 'center';
+    ctx.textBaseline   = 'middle';
+    ctx.fillText('×', dx, dy);
+    ctx.textAlign      = 'left';
+    ctx.textBaseline   = 'alphabetic';
+
+    ctx.restore();
   }
 }
 
@@ -345,44 +435,93 @@ function renderStrokes() {
 //   canvas element itself a "mouse focus", which would blur the textarea
 
 canvas.addEventListener('mousedown', e => {
-  e.preventDefault(); // prevent canvas from stealing focus from the textarea
+  e.preventDefault();
 
   const p = canvasPos(e);
 
-  // Image drag takes priority over mode (works in both write and draw modes)
-  const im = imgAt(p.x, p.y);
-  if (im) {
-    draggingImg = im;
-    dragOff     = { x: p.x - im.x, y: p.y - im.y };
+  // Delete button on selected image
+  if (selectedImg && isOverDelete(p.x, p.y, selectedImg)) {
+    canvasImages = canvasImages.filter(i => i !== selectedImg);
+    selectedImg  = null;
+    render();
     return;
   }
+
+  // Corner resize handles on selected image
+  const handle = handleAt(p.x, p.y);
+  if (handle) {
+    const im = selectedImg;
+    resizingImg  = im;
+    resizeCorner = handle.id;
+    resizeFixed  = {
+      tl: { x: im.x + im.w, y: im.y + im.h },
+      tr: { x: im.x,         y: im.y + im.h },
+      bl: { x: im.x + im.w, y: im.y         },
+      br: { x: im.x,         y: im.y         },
+    }[handle.id];
+    return;
+  }
+
+  // Click on image: select + start drag
+  const im = imgAt(p.x, p.y);
+  if (im) {
+    selectedImg = im;
+    draggingImg = im;
+    dragOff     = { x: p.x - im.x, y: p.y - im.y };
+    render();
+    return;
+  }
+
+  // Click on empty canvas: deselect image
+  if (selectedImg) { selectedImg = null; render(); }
 
   if (mode === 'draw') {
     drawingStroke = { pts: [p], color: drawColor, lineW: brushSize };
     return;
   }
 
-  // Write mode: any click on the canvas focuses the hidden textarea.
-  // (We removed the inContent check — clicking anywhere should start writing.)
-  if (mode === 'write') {
-    input.focus();
-  }
+  if (mode === 'write') input.focus();
 });
 
 // Attach move/up to document so strokes and image drags aren't interrupted
 // by the mouse briefly leaving the canvas element.
 document.addEventListener('mousemove', e => {
-  if (!draggingImg && !drawingStroke) {
-    // Only update cursor when hovering over the canvas itself
-    if (e.target === canvas) {
-      const p = canvasPos(e);
-      const hov = imgAt(p.x, p.y);
-      canvas.style.cursor = hov ? 'move' : (mode === 'draw' ? 'crosshair' : 'text');
+  const p = canvasPos(e);
+
+  // ── Resize ───────────────────────────────────────────────────────
+  if (resizingImg) {
+    const im  = resizingImg;
+    const MIN = 20;
+    const fx  = resizeFixed.x, fy = resizeFixed.y;
+    if (resizeCorner === 'br') {
+      im.w = Math.max(MIN, p.x - fx);
+      im.h = Math.max(MIN, p.y - fy);
+    } else if (resizeCorner === 'tl') {
+      im.w = Math.max(MIN, fx - p.x); im.x = fx - im.w;
+      im.h = Math.max(MIN, fy - p.y); im.y = fy - im.h;
+    } else if (resizeCorner === 'tr') {
+      im.w = Math.max(MIN, p.x - fx);
+      im.h = Math.max(MIN, fy - p.y); im.y = fy - im.h;
+    } else if (resizeCorner === 'bl') {
+      im.w = Math.max(MIN, fx - p.x); im.x = fx - im.w;
+      im.h = Math.max(MIN, p.y - fy);
     }
+    render();
     return;
   }
 
-  const p = canvasPos(e);
+  if (!draggingImg && !drawingStroke) {
+    if (e.target === canvas) {
+      if (selectedImg && isOverDelete(p.x, p.y, selectedImg)) {
+        canvas.style.cursor = 'pointer';
+      } else {
+        const h = handleAt(p.x, p.y);
+        if (h) canvas.style.cursor = h.cursor;
+        else canvas.style.cursor = imgAt(p.x, p.y) ? 'move' : (mode === 'draw' ? 'crosshair' : 'text');
+      }
+    }
+    return;
+  }
 
   if (draggingImg) {
     draggingImg.x = p.x - dragOff.x;
@@ -398,6 +537,7 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => {
+  if (resizingImg)   { resizingImg = null; resizeCorner = null; resizeFixed = null; render(); return; }
   if (draggingImg)   { draggingImg = null; render(); return; }
   if (drawingStroke) {
     if (drawingStroke.pts.length >= 2) strokes.push(drawingStroke);
@@ -440,6 +580,7 @@ canvas.addEventListener('drop', e => {
   canvasImages.push({
     id: crypto.randomUUID(),
     img: src.img,
+    alpha: src.alpha,
     x: p.x - w / 2,
     y: p.y - h / 2,
     w, h,
@@ -498,21 +639,47 @@ document.getElementById('clear-btn').addEventListener('click', () => {
 });
 
 // ── PHOTO UPLOAD ─────────────────────────────────────────────────
+
+// Precompute per-row opaque x-ranges at natural resolution.
+// lineLayout scales these to display size so text hugs the actual
+// visible edges of a PNG rather than its rectangular bounding box.
+function computeAlpha(img) {
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  const tmp = document.createElement('canvas');
+  tmp.width = nw; tmp.height = nh;
+  const tc = tmp.getContext('2d');
+  tc.drawImage(img, 0, 0);
+  const data = tc.getImageData(0, 0, nw, nh).data;
+  const rows = new Array(nh).fill(null);
+  for (let row = 0; row < nh; row++) {
+    let lo = -1, hi = -1;
+    for (let col = 0; col < nw; col++) {
+      if (data[(row * nw + col) * 4 + 3] > 16) {
+        if (lo === -1) lo = col;
+        hi = col;
+      }
+    }
+    if (lo !== -1) rows[row] = [lo, hi];
+  }
+  return { rows, nw, nh };
+}
+
 document.getElementById('file-input').addEventListener('change', e => {
   [...e.target.files].forEach(file => {
     const reader = new FileReader();
     reader.onload = ev => {
       const img = new Image();
       img.onload = () => {
-        const id = crypto.randomUUID();
-        sidebarImages.push({ id, img });
+        const id    = crypto.randomUUID();
+        const alpha = computeAlpha(img);
+        sidebarImages.push({ id, img, alpha });
         addSidebarThumb(id, img);
       };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
   });
-  e.target.value = ''; // allow re-uploading same file
+  e.target.value = '';
 });
 
 function addSidebarThumb(id, img) {
